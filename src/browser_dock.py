@@ -54,13 +54,23 @@ class WebBrowserDock(QDockWidget, BrowserContainer):
         self.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.BottomDockWidgetArea)
 
+        # Set minimum and preferred size for AMBOSS-like behavior
+        self.setMinimumSize(400, 300)
+        self.resize(500, 600)
+        
         main_layout = self._core
         widget = QWidget(self._parent)
         widget.setLayout(main_layout)
         self.setWidget(widget)
 
+        # Position as side dock on the right, similar to AMBOSS
         self._parent.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self)
-        # self.visibilityChanged.connect(lambda visible: self.onClose() if not visible else None)
+        
+        # Set dock features to allow resizing but prevent closing/floating for better UX
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable | 
+                        QDockWidget.DockWidgetFeature.DockWidgetResizable)
+        
+        # Start hidden
         self.hide()
 
         if cfg.getConfig().enableDarkReader:

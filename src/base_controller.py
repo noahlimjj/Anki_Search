@@ -88,9 +88,22 @@ class BaseController(ABC):
         websiteList = self.getCurrentSearch()
 
         if cfg.getConfig().useSystemBrowser:
+            import subprocess
+            import platform
             for wl in websiteList:
                 target = self.browser.format_target_url(wl, query)
-                BaseController.openExternalLink(target)
+                # Force Chrome browser usage
+                system = platform.system()
+                try:
+                    if system == "Darwin":  # macOS
+                        subprocess.run(["open", "-a", "Google Chrome", target], check=True)
+                    elif system == "Windows":
+                        subprocess.run(["start", "chrome", target], shell=True, check=True)
+                    else:  # Linux
+                        subprocess.run(["google-chrome", target], check=True)
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    # Fallback to system default if Chrome not found
+                    BaseController.openExternalLink(target)
             return
         
         self.beforeOpenBrowser()

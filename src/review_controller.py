@@ -36,9 +36,15 @@ class ReviewController(BaseController, DataImportListener):
         self.setup_bindings()
 
     def setup_bindings(self):
-        gui_hooks.webview_will_show_context_menu.append(self.onReviewerHandle)
-
+        # Remove context menu, use shift+click instead
+        # gui_hooks.webview_will_show_context_menu.append(self.onReviewerHandle)
+        
         gui_hooks.card_will_show.append(self.load_card)
+        # Hook into Anki's bridge command system
+        from aqt import mw
+        self._old_link_handler = mw.reviewer._linkHandler
+        mw.reviewer._linkHandler = self._wrap_link_handler(mw.reviewer._linkHandler)
+        
         Reviewer._shortcutKeys = self.wrap_shortcutKeys(Reviewer._shortcutKeys)
 
         action = QAction("Anki-Web-Browser Config", mw)
@@ -115,6 +121,8 @@ class ReviewController(BaseController, DataImportListener):
     def load_card(self, text: str, card, kind: str) -> str:
         Feedback.log('WebBrowser - CardShift')
         if not self.browser or cfg.getConfig().useSystemBrowser:
+            # Inject JavaScript for ctrl+click handling even with system browser
+            text += self._inject_shift_click_js()
             return text
 
         if self._last_card_id != card.id:
@@ -126,6 +134,8 @@ class ReviewController(BaseController, DataImportListener):
         self.update_fields_from_note()
         self._last_card_id = card.id
 
+        # Inject JavaScript for ctrl+click handling
+        text += self._inject_shift_click_js()
         return text
 
     def onReviewerHandle(self, webView, menu):
@@ -167,5 +177,89 @@ class ReviewController(BaseController, DataImportListener):
             ind: val for ind, val in enumerate(map(lambda i: i["name"], fieldList))
         }
         self.browser.setFields(fieldsNames)
+
+    def _inject_shift_click_js(self):
+        """Inject JavaScript to handle Ctrl+Click events"""
+        return '''
+        <script>
+        (function() {
+            // Remove any existing event listeners
+            document.removeEventListener('click', handleShiftClick, true);
+            
+            function handleShiftClick(event) {
+                if (event.ctrlKey && event.button === 0) { // Left click with Ctrl
+                    event.preventDefault();
+                    event.stopPropagation();
+                    
+                    var selection = window.getSelection();
+                    var selectedText = '';
+                    
+                    // If there's a selection, use it
+                    if (selection && selection.toString()) {
+                        selectedText = selection.toString().trim();
+                    } else {
+                        // If no selection, try to get word under cursor
+                        var range = document.caretRangeFromPoint(event.clientX, event.clientY);
+                        if (range) {
+                            var textNode = range.startContainer;
+                            if (textNode.nodeType === Node.TEXT_NODE) {
+                                var text = textNode.textContent;
+                                var offset = range.startOffset;
+                                
+                                // Find word boundaries
+                                var start = offset;
+                                var end = offset;
+                                
+                                // Find start of word
+                                while (start > 0 && /\\w/.test(text[start - 1])) {
+                                    start--;
+                                }
+                                
+                                // Find end of word
+                                while (end < text.length && /\\w/.test(text[end])) {
+                                    end++;
+                                }
+                                
+                                selectedText = text.substring(start, end).trim();
+                            }
+                        }
+                    }
+                    
+                    if (selectedText) {
+                        // Send message to Python
+                        if (typeof pycmd !== 'undefined') {
+                            pycmd('ankiWebBrowserShiftClick:' + selectedText);
+                        }
+                    }
+                }
+            }
+            
+            // Add event listener with capture=true to catch events early
+            document.addEventListener('click', handleShiftClick, true);
+        })();
+        </script>
+        '''
+
+    def _wrap_link_handler(self, original_handler):
+        """Wrap the original link handler to intercept our shift+click commands"""
+        def wrapped_handler(url):
+            if url.startswith('ankiWebBrowserShiftClick:'):
+                selected_text = url.replace('ankiWebBrowserShiftClick:', '')
+                if selected_text.strip():
+                    Feedback.log(f'Ctrl+Click detected on text: {selected_text}')
+                    # Simulate the old behavior but triggered by ctrl+click
+                    self._handle_shift_click_selection(selected_text.strip())
+                return
+            # Call original handler for all other links
+            return original_handler(url)
+        return wrapped_handler
+
+    def _handle_shift_click_selection(self, selected_text):
+        """Handle the selected text from shift+click"""
+        # Set the current search to default providers (automatically use Google Web)
+        self._curSearch = ['Google Web']
+        
+        # Open in browser with the selected text
+        self.openInBrowser(selected_text)
 
 review_controller = ReviewController()
